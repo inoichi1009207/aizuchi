@@ -1,0 +1,25 @@
+# 素材不入库:表情包截自第三方作品,版权不属本项目,只在本地与运行环境存在
+stickers/
+
+# 运行时状态与本地配置(含 API key,永不入库)
+state.json
+config.yaml
+*.local.yaml
+
+# NapCat 登录态
+napcat-data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 实验室笔记不随仓发布(2026-08-28 用户裁定)。
+# 它们合起来构成一份定位包:真实域名、同机跑生产站、OS/规格/出口 ASN,
+# 再叠加 known-issues 里「端口绑 0.0.0.0、唯一防线是单点防火墙、
+# WebUI token 是固定共享密钥」—— 单条都还好,拼起来不该公开。
+# 对第三方部署者也没有用:可复用的内容已在 README + AGENTS.md。
+# 本地副本留在仓外。
+docs/deploy-windows.md
+docs/napcat-install-findings.md
