@@ -87,6 +87,27 @@ class BqBot(Star):
         self.limiter = FloodLimiter(
             self.cfg["proactive"], ROOT / self.cfg["state_file"], time.time
         )
+        # ⚠️ 加载期校验。此前这些只在运行期才炸:
+        #   · 表里某行缺 mood/desc/use_when ⇒ _render_table 每条消息都 KeyError
+        #   · 表里有行但文件不在 ⇒ 发送时才失败,而配额已经先扣了
+        #   · 池子为空 ⇒ 被 @ 的随机兜底抛 IndexError
+        # stickers.yaml 里写着「改完必跑双向一致核对」——那是个手工仪式,
+        # 而它其实是加载时四行代码的事。手工仪式迟早会漏,加载期校验不会。
+        need = ("mood", "desc", "use_when")
+        bad = [s.get("file", "?") for s in self.stickers
+               if not all(k in s for k in need)]
+        if bad:
+            raise ValueError(f"[aizuchi] 描述表这些行缺字段{need}: {bad[:5]}")
+        missing = [n for n in self.by_file if not (self.sticker_dir / n).exists()]
+        if missing:
+            raise FileNotFoundError(f"[aizuchi] 表里有、文件不在: {missing[:5]}")
+        if not self.by_file:
+            raise ValueError("[aizuchi] 表情池为空 —— 检查 stickers.yaml")
+        if self.limiter._corrupt:
+            # 静默归零过一次,至少要留痕:否则「配额被清空」与「今天还没发过」
+            # 在日志上一模一样。
+            logger.error(f"[aizuchi] 状态文件损坏已重置,24h 配额从零重算: {self.limiter._corrupt}")
+
         self.history = {}          # group_id -> 最近若干条消息(文字)
         self.img_history = {}      # group_id -> 最近若干张图片的 URL
         self.user_cooldown = {}    # (group, user) -> 上次被 @ 回复的时刻
@@ -257,7 +278,12 @@ class BqBot(Star):
         # 攒上下文(无论回不回都攒)
         buf = self.history.setdefault(gid, [])
         if event.message_str:
-            buf.append(f"{event.get_sender_name()}: {event.message_str}")
+            # ⚠️ 上限。条数由 context_window 管,但**单条长度不设限** ⇒
+            # 一条超长粘贴会永久驻留在窗口里,之后每一次模型调用都带着它。
+            # 昵称同样是陌生人可控的,且没有分隔与转义 —— 截断至少压住体量。
+            name = (event.get_sender_name() or "")[:32]
+            body = (event.message_str or "")[:500]
+            buf.append(f"{name}: {body}")
             self._trim(buf, self.cfg["proactive"]["context_window"])
         # 图片单独攒:群里大量内容是表情包,纯文字读不出气氛
         imgs = self._collect_images(event, gid)

@@ -110,6 +110,7 @@ python tests/test_replay.py               # 防刷屏闸,退出码 0 = 全绿
 python tests/probe_rate1_determinism.py   # 骰子确实接在决策路径上
 python tests/probe_mutation.py            # 上一个测试的盲区被补上了
 python tests/probe_race.py                # 并发下硬冷却不会被绕过
+python tests/probe_corrupt_state.py       # 状态文件坏了不打死插件、也不静默归零
 git ls-files | grep -iE '\.(jpg|jpeg|png|gif|webp)$'   # 必须无输出:素材不入库
 ```
 

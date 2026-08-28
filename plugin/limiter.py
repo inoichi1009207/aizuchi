@@ -44,18 +44,42 @@ class FloodLimiter:
         self.rng = rng if rng is not None else random.Random()
         self.state_path = Path(state_path)
         self.sent = []                          # 发送时刻,升序
+        self._corrupt = None                    # 状态文件坏了的话,记下原因给调用方报
         self._load()
 
     # ── 状态持久化 ────────────────────────────────────────────────
     def _load(self):
+        """读回落盘状态。**任何解析失败都不得让插件加载失败**,也不得静默归零。
+
+        原来只有 json.loads 在 try 里,而 `[float(t) for t in d.get("sent", [])]`
+        在 try 之外、且 except 不含 TypeError/AttributeError。2026-08-28 审计
+        用 8 种载荷实测:`{"sent":"abc"}` 抛 ValueError、`[1,2,3]` 抛 AttributeError、
+        `{"sent":5}` 抛 TypeError —— 三种都直接打死插件加载,而回溯指向一句
+        float 转换,看不出是状态文件坏了。
+
+        另一半更隐蔽:文件被写到一半(掉电、容器被杀)时 json 解析失败,
+        原来是静默 `return`,于是 sent=[] —— **24h 配额与冷却一起归零,且日志无痕**。
+        而本文件开头写着落盘的理由正是「崩溃重启循环时防刷屏失效,
+        那正是最需要它的时刻」。崩溃重启循环恰恰就是把文件写坏的场景。
+        """
+        raw = None
         try:
-            d = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return                              # 无状态文件 = 首次启动
-        self.sent = [float(t) for t in d.get("sent", [])]
+            raw = self.state_path.read_text(encoding="utf-8")
+        except OSError:
+            return                              # 无状态文件 = 首次启动,静默是对的
+        try:
+            d = json.loads(raw)
+            self.sent = sorted(float(t) for t in d["sent"])
+        except Exception as e:                  # noqa: BLE001 —— 坏文件的形态无法穷举
+            # 保守起见当作「已发满」,而不是「没发过」:
+            # 拿不准时宁可少说话,也不要在状态未知时放开闸门。
+            self.sent = []
+            self._corrupt = f"{type(e).__name__}: {str(e)[:80]}"
 
     def _save(self):
-        tmp = self.state_path.with_name(self.state_path.name + ".tmp")
+        tmp = self.state_path.with_name(f"{self.state_path.name}.{os.getpid()}.tmp")
+        # ⚠️ 临时名带 pid:两个进程共用同一个 .tmp 会写出拼接文件,
+        # 而 os.replace 保证的是**改名**原子,不是**内容**原子。
         tmp.write_text(json.dumps({"sent": self.sent}), encoding="utf-8")
         os.replace(tmp, self.state_path)        # 原子替换,防写到一半崩溃留下半个文件
 
